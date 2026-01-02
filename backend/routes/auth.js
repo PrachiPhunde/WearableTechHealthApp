@@ -18,7 +18,7 @@ const router = express.Router();
  */
 router.post('/register', async (req, res) => {
   try {
-    const { email, password, birth_date, gender } = req.body;
+    const { name, email, password, birth_date, gender } = req.body;
 
     // Validation
     if (!email || !password) {
@@ -62,10 +62,10 @@ router.post('/register', async (req, res) => {
       // Hash password
       const passwordHash = await bcrypt.hash(password, 10);
 
-      // Insert new user with birth_date and gender
+      // Insert new user with name, birth_date and gender
       db.run(
-        'INSERT INTO users (email, password_hash, birth_date, gender) VALUES (?, ?, ?, ?)',
-        [email, passwordHash, birth_date || null, gender ? gender.toLowerCase() : null],
+        'INSERT INTO users (name, email, password_hash, birth_date, gender) VALUES (?, ?, ?, ?, ?)',
+        [name || null, email, passwordHash, birth_date || null, gender ? gender.toLowerCase() : null],
         function (insertErr) {
           if (insertErr) {
             return res.status(500).json({ error: 'Failed to create user' });
@@ -83,6 +83,7 @@ router.post('/register', async (req, res) => {
             token,
             user: {
               id: this.lastID,
+              name: name || null,
               email,
               birth_date: birth_date || null,
               gender: gender ? gender.toLowerCase() : null,

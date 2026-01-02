@@ -107,12 +107,12 @@ router.get('/latest', (req, res) => {
 /**
  * GET /api/vitals/history
  * Get historical vital data
- * Query params: period (24h, 7d) - defaults to 24h
+ * Query params: range (24h, 7d) or period (24h, 7d) - defaults to 24h
  */
 router.get('/history', (req, res) => {
   try {
     const userId = req.userId;
-    const period = req.query.period || '24h';
+    const period = req.query.range || req.query.period || '24h';
     const db = getDb();
 
     // Calculate time threshold based on period
@@ -134,13 +134,89 @@ router.get('/history', (req, res) => {
 
         res.json({
           vitals: vitals || [],
-          period,
+          range: period,
           count: vitals ? vitals.length : 0,
         });
       }
     );
   } catch (error) {
     res.status(500).json({ error: 'Server error fetching history' });
+  }
+});
+
+/**
+ * POST /api/vitals/simulate
+ * Simulate health data for testing
+ * Body: { count, interval_minutes } - generates sample data over time
+ */
+router.post('/simulate', (req, res) => {
+  try {
+    const userId = req.userId;
+    const { count = 10, interval_minutes = 5 } = req.body;
+    const db = getDb();
+
+    // Get user's device
+    db.get(
+      'SELECT device_id FROM devices WHERE user_id = ?',
+      [userId],
+      (err, device) => {
+        if (err) {
+          return res.status(500).json({ error: 'Database error' });
+        }
+
+        if (!device) {
+          return res.status(404).json({ error: 'No device connected. Please connect a device first.' });
+        }
+
+        const deviceId = device.device_id;
+        const now = new Date();
+        const inserted = [];
+
+        // Generate sample vital data
+        for (let i = 0; i < count; i++) {
+          const timestamp = new Date(now.getTime() - (count - i - 1) * interval_minutes * 60 * 1000);
+          
+          // Generate realistic sample data
+          const heartRate = Math.floor(Math.random() * 40) + 60; // 60-100 bpm
+          const spo2 = Math.floor(Math.random() * 5) + 95; // 95-99%
+          const temperature = (Math.random() * 1.5 + 36.0).toFixed(1); // 36.0-37.5°C
+          const steps = Math.floor(Math.random() * 500) + 100; // 100-600 steps per interval
+
+          db.run(
+            `INSERT INTO vitals (user_id, device_id, heart_rate, spo2, temperature, steps, timestamp)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [userId, deviceId, heartRate, spo2, temperature, steps, timestamp.toISOString()],
+            function (insertErr) {
+              if (!insertErr) {
+                inserted.push(this.lastID);
+              }
+            }
+          );
+        }
+
+        // Trigger alert evaluation after a short delay
+        setTimeout(() => {
+          db.get(
+            `SELECT heart_rate, spo2, temperature, steps FROM vitals 
+             WHERE user_id = ? ORDER BY timestamp DESC LIMIT 1`,
+            [userId],
+            (fetchErr, latest) => {
+              if (!fetchErr && latest) {
+                evaluateAlerts(userId, latest).catch(console.error);
+              }
+            }
+          );
+        }, 1000);
+
+        res.status(201).json({
+          message: `Simulated ${count} vital data points`,
+          count: inserted.length,
+          interval_minutes,
+        });
+      }
+    );
+  } catch (error) {
+    res.status(500).json({ error: 'Server error simulating vitals' });
   }
 });
 

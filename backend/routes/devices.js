@@ -15,11 +15,12 @@ router.use(authenticateToken);
 /**
  * POST /api/devices/connect
  * Connect a smartwatch device (simulated)
- * Body: { device_id, platform }
+ * Beta rule: Only ONE device per user
+ * Body: { device_id, device_type, platform }
  */
 router.post('/connect', (req, res) => {
   try {
-    const { device_id, platform } = req.body;
+    const { device_id, device_type, platform } = req.body;
     const userId = req.userId;
 
     if (!device_id) {
@@ -28,29 +29,30 @@ router.post('/connect', (req, res) => {
 
     const db = getDb();
 
-    // Check if device already exists for this user
+    // Check if user already has a device (beta: one device per user)
     db.get(
-      'SELECT id FROM devices WHERE device_id = ? AND user_id = ?',
-      [device_id, userId],
+      'SELECT id, device_id, device_type, platform FROM devices WHERE user_id = ?',
+      [userId],
       (err, existingDevice) => {
         if (err) {
           return res.status(500).json({ error: 'Database error' });
         }
 
         if (existingDevice) {
-          // Update last sync time
+          // User already has a device - update it
           db.run(
-            'UPDATE devices SET last_sync_at = CURRENT_TIMESTAMP WHERE id = ?',
-            [existingDevice.id],
+            'UPDATE devices SET device_id = ?, device_type = ?, platform = ?, last_sync_at = CURRENT_TIMESTAMP WHERE user_id = ?',
+            [device_id, device_type || 'smartwatch', platform || 'unknown', userId],
             (updateErr) => {
               if (updateErr) {
                 return res.status(500).json({ error: 'Failed to update device' });
               }
               res.json({
-                message: 'Device already connected, sync time updated',
+                message: 'Device updated successfully',
                 device: {
                   id: existingDevice.id,
                   device_id,
+                  device_type: device_type || 'smartwatch',
                   platform: platform || 'unknown',
                 },
               });
@@ -59,10 +61,14 @@ router.post('/connect', (req, res) => {
         } else {
           // Insert new device
           db.run(
-            'INSERT INTO devices (user_id, device_id, platform, last_sync_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)',
-            [userId, device_id, platform || 'unknown'],
+            'INSERT INTO devices (user_id, device_id, device_type, platform, last_sync_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)',
+            [userId, device_id, device_type || 'smartwatch', platform || 'unknown'],
             function (insertErr) {
               if (insertErr) {
+                // Check if device_id is already taken by another user
+                if (insertErr.message.includes('UNIQUE constraint')) {
+                  return res.status(409).json({ error: 'Device ID already in use by another user' });
+                }
                 return res.status(500).json({ error: 'Failed to connect device' });
               }
 
@@ -71,6 +77,7 @@ router.post('/connect', (req, res) => {
                 device: {
                   id: this.lastID,
                   device_id,
+                  device_type: device_type || 'smartwatch',
                   platform: platform || 'unknown',
                 },
               });
@@ -81,6 +88,54 @@ router.post('/connect', (req, res) => {
     );
   } catch (error) {
     res.status(500).json({ error: 'Server error during device connection' });
+  }
+});
+
+/**
+ * GET /api/devices/status
+ * Get connected device status for the authenticated user
+ */
+router.get('/status', (req, res) => {
+  try {
+    const userId = req.userId;
+    const db = getDb();
+
+    db.get(
+      'SELECT id, device_id, device_type, platform, connected_at, last_sync_at FROM devices WHERE user_id = ?',
+      [userId],
+      (err, device) => {
+        if (err) {
+          return res.status(500).json({ error: 'Database error' });
+        }
+
+        if (!device) {
+          return res.json({
+            connected: false,
+            message: 'No device connected',
+          });
+        }
+
+        // Calculate time since last sync
+        const lastSync = device.last_sync_at ? new Date(device.last_sync_at) : null;
+        const now = new Date();
+        const minutesSinceSync = lastSync ? Math.floor((now - lastSync) / (1000 * 60)) : null;
+
+        res.json({
+          connected: true,
+          device: {
+            id: device.id,
+            device_id: device.device_id,
+            device_type: device.device_type,
+            platform: device.platform,
+            connected_at: device.connected_at,
+            last_sync_at: device.last_sync_at,
+            minutes_since_sync: minutesSinceSync,
+          },
+        });
+      }
+    );
+  } catch (error) {
+    res.status(500).json({ error: 'Server error fetching device status' });
   }
 });
 

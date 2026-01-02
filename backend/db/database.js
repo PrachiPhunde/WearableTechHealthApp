@@ -41,10 +41,12 @@ function initDatabase() {
 function createTables() {
   return new Promise((resolve, reject) => {
     db.serialize(() => {
-      // Users table - stores user authentication data
+      // Users table - stores user authentication and profile data
+      // Relationships: One user can have one device, many vitals, many alerts
       db.run(`
         CREATE TABLE IF NOT EXISTS users (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT,
           email TEXT UNIQUE NOT NULL,
           password_hash TEXT NOT NULL,
           birth_date DATE,
@@ -58,25 +60,20 @@ function createTables() {
         }
       });
 
-      // Add birth_date and gender columns if they don't exist (for existing databases)
-      db.run(`
-        ALTER TABLE users ADD COLUMN birth_date DATE
-      `, () => {
-        // Ignore error if column already exists
-      });
-
-      db.run(`
-        ALTER TABLE users ADD COLUMN gender TEXT
-      `, () => {
-        // Ignore error if column already exists
-      });
+      // Add columns if they don't exist (for existing databases)
+      db.run(`ALTER TABLE users ADD COLUMN name TEXT`, () => {});
+      db.run(`ALTER TABLE users ADD COLUMN birth_date DATE`, () => {});
+      db.run(`ALTER TABLE users ADD COLUMN gender TEXT`, () => {});
 
       // Devices table - stores connected smartwatch devices
+      // Relationship: One user can have ONE device (beta rule)
+      // device_id is unique to prevent duplicates across users
       db.run(`
         CREATE TABLE IF NOT EXISTS devices (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
-          user_id INTEGER NOT NULL,
+          user_id INTEGER UNIQUE NOT NULL,
           device_id TEXT UNIQUE NOT NULL,
+          device_type TEXT,
           platform TEXT,
           connected_at DATETIME DEFAULT CURRENT_TIMESTAMP,
           last_sync_at DATETIME,
@@ -88,6 +85,9 @@ function createTables() {
           return;
         }
       });
+
+      // Add device_type column if it doesn't exist
+      db.run(`ALTER TABLE devices ADD COLUMN device_type TEXT`, () => {});
 
       // Vitals table - time-series health data
       db.run(`
@@ -144,6 +144,25 @@ function createTables() {
       db.run(`
         CREATE INDEX IF NOT EXISTS idx_alerts_user_resolved 
         ON alerts(user_id, resolved)
+      `, (err) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+      });
+
+      // Notification preferences table - stores user notification settings
+      // Relationship: One user has one set of preferences
+      db.run(`
+        CREATE TABLE IF NOT EXISTS notification_preferences (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER UNIQUE NOT NULL,
+          high_heart_rate_enabled BOOLEAN DEFAULT 1,
+          low_spo2_enabled BOOLEAN DEFAULT 1,
+          inactivity_enabled BOOLEAN DEFAULT 1,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (user_id) REFERENCES users(id)
+        )
       `, (err) => {
         if (err) {
           reject(err);

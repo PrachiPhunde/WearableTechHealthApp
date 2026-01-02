@@ -8,9 +8,11 @@ const express = require('express');
 const cors = require('cors');
 const { initDatabase } = require('./db/database');
 const authRoutes = require('./routes/auth');
+const profileRoutes = require('./routes/profile');
 const deviceRoutes = require('./routes/devices');
 const vitalsRoutes = require('./routes/vitals');
 const alertsRoutes = require('./routes/alerts');
+const preferencesRoutes = require('./routes/preferences');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -26,9 +28,11 @@ app.get('/health', (req, res) => {
 
 // API Routes
 app.use('/api/auth', authRoutes);
+app.use('/api/profile', profileRoutes);
 app.use('/api/devices', deviceRoutes);
 app.use('/api/vitals', vitalsRoutes);
 app.use('/api/alerts', alertsRoutes);
+app.use('/api/preferences', preferencesRoutes);
 
 // Initialize database and start server
 initDatabase()
